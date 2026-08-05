@@ -1,0 +1,21 @@
+# Terraform / OpenTofu working files (never anchored bare — but these are safe)
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

@@ -1,0 +1,128 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Always-on job: builds everything, runs the offline unit tests, type-checks
+  # the AWS e2e tests (behind the `e2e` build tag, so they compile but do not
+  # touch AWS here), and validates the Terraform fixtures. No AWS creds needed.
+  unit:
+    runs-on: terratest-aws-examples
+    steps:
+      - uses: actions/checkout@v4
+
+      # The minimal self-hosted runner ships without a C toolchain, and the race
+      # detector needs cgo. Install gcc + unzip (for the OpenTofu release zip).
+      - name: Install toolchain
+        run: |
+          set -eux
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends build-essential unzip curl
+          fi
+          gcc --version
+
+      # setup-go pulls the official .tar.gz (not .tar.xz), so it works on the
+      # minimal self-hosted runner. Version comes straight from go.mod.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install OpenTofu
+        run: |
+          set -eux
+          ver=1.9.1
+          arch="$(dpkg --print-architecture)" # amd64 | arm64
+          curl -fsSL -o /tmp/tofu.zip \
+            "https://github.com/opentofu/opentofu/releases/download/v${ver}/tofu_${ver}_linux_${arch}.zip"
+          sudo unzip -o /tmp/tofu.zip tofu -d /usr/local/bin
+          tofu version
+
+      - name: gofmt (must be clean)
+        run: |
+          set -eux
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet (unit + e2e tag)
+        run: |
+          set -eux
+          go vet ./...
+          go vet -tags e2e ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests (race + coverage)
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -covermode=atomic ./...
+
+      - name: Type-check e2e tests (compile only, no AWS)
+        run: go test -tags e2e -run '^$' ./test/...
+
+      - name: Terraform fmt + validate
+        run: |
+          set -eux
+          tofu fmt -check -recursive examples
+          for d in examples/*/; do
+            (cd "$d" && tofu init -backend=false -input=false && tofu validate)
+          done
+
+  # Opt-in job: actually applies the examples against a real AWS sandbox using
+  # short-lived OIDC credentials (no long-lived keys). It is manual-only because
+  # it creates billable resources. Wire AWS_ROLE_ARN as a repo variable and give
+  # the OIDC role permissions for S3/EC2/IAM in a throwaway account before use.
+  e2e:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: terratest-aws-examples
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TERRATEST_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          set -eux
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends build-essential unzip curl
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install OpenTofu
+        run: |
+          set -eux
+          ver=1.9.1
+          arch="$(dpkg --print-architecture)"
+          curl -fsSL -o /tmp/tofu.zip \
+            "https://github.com/opentofu/opentofu/releases/download/v${ver}/tofu_${ver}_linux_${arch}.zip"
+          sudo unzip -o /tmp/tofu.zip tofu -d /usr/local/bin
+          # Terratest shells out to `terraform`; OpenTofu is a drop-in here.
+          sudo ln -sf /usr/local/bin/tofu /usr/local/bin/terraform
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.TERRATEST_REGION }}
+
+      - name: Run Terratest examples
+        run: |
+          set -eux
+          go test -tags e2e -v -timeout 30m ./test/...
