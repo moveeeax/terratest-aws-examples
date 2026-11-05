@@ -1,7 +1,7 @@
 # terratest-aws-examples
 
 [![ci](https://github.com/moveeeax/terratest-aws-examples/actions/workflows/ci.yml/badge.svg)](https://github.com/moveeeax/terratest-aws-examples/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](go.mod)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A copy-paste library of **real** [Terratest](https://terratest.gruntwork.io/)

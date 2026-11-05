@@ -6,14 +6,25 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+env:
+  # OpenTofu used for fixture validation and e2e runs. Bump manually.
+  TOFU_VERSION: 1.13.8
+
 jobs:
   # Always-on job: builds everything, runs the offline unit tests, type-checks
   # the AWS e2e tests (behind the `e2e` build tag, so they compile but do not
   # touch AWS here), and validates the Terraform fixtures. No AWS creds needed.
   unit:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.26", "1.27"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The race detector needs cgo. Install gcc + unzip (for the OpenTofu release zip).
       - name: Install toolchain
@@ -25,16 +36,15 @@ jobs:
           fi
           gcc --version
 
-      # Go version comes straight from go.mod.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
           cache: true
 
       - name: Install OpenTofu
         run: |
           set -eux
-          ver=1.9.1
+          ver="${TOFU_VERSION}"
           arch="$(dpkg --print-architecture)" # amd64 | arm64
           curl -fsSL -o /tmp/tofu.zip \
             "https://github.com/opentofu/opentofu/releases/download/v${ver}/tofu_${ver}_linux_${arch}.zip"
@@ -88,7 +98,7 @@ jobs:
     env:
       TERRATEST_REGION: us-east-1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install toolchain
         run: |
@@ -98,7 +108,8 @@ jobs:
             sudo apt-get install -y --no-install-recommends build-essential unzip curl
           fi
 
-      - uses: actions/setup-go@v5
+      # Go version comes straight from go.mod.
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -106,7 +117,7 @@ jobs:
       - name: Install OpenTofu
         run: |
           set -eux
-          ver=1.9.1
+          ver="${TOFU_VERSION}"
           arch="$(dpkg --print-architecture)"
           curl -fsSL -o /tmp/tofu.zip \
             "https://github.com/opentofu/opentofu/releases/download/v${ver}/tofu_${ver}_linux_${arch}.zip"
@@ -115,7 +126,7 @@ jobs:
           sudo ln -sf /usr/local/bin/tofu /usr/local/bin/terraform
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.TERRATEST_REGION }}
